@@ -5,7 +5,7 @@ A small macOS menu bar + floating timer for tracking hours per job, so filling i
 ## Build & install
 
 ```sh
-./build.sh           # builds build/JobTimer.app
+./build.sh           # builds "build/JobTimer Spacecamp.app"
 ./build.sh install   # also copies it to /Applications and launches it
 ```
 

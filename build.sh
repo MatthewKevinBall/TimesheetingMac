@@ -1,9 +1,9 @@
 #!/bin/bash
-# Builds build/JobTimer.app. Run with "install" to copy it to /Applications and launch it.
+# Builds "build/JobTimer Spacecamp.app". Run with "install" to copy it to /Applications and launch it.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="build/JobTimer.app"
+APP="build/JobTimer Spacecamp.app"
 
 swift build -c release
 BIN_DIR="$(swift build -c release --show-bin-path)"
@@ -25,8 +25,8 @@ echo "Built $APP"
 
 if [ "${1:-}" = "install" ]; then
   pkill -x JobTimer && sleep 1 || true
-  rm -rf /Applications/JobTimer.app
+  rm -rf /Applications/JobTimer.app "/Applications/$(basename "$APP")"
   cp -R "$APP" /Applications/
-  open /Applications/JobTimer.app
-  echo "Installed and launched /Applications/JobTimer.app"
+  open "/Applications/$(basename "$APP")"
+  echo "Installed and launched /Applications/$(basename "$APP")"
 fi
