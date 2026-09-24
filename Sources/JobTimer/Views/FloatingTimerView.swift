@@ -44,6 +44,7 @@ struct FloatingTimerView: View {
             Menu {
                 Button("Switch Job…") { AppController.shared.showQuickSwitcher() }
                 Button("Open Timesheet") { AppController.shared.showMainWindow(tab: .timesheet) }
+                Button("Open Spacecamp") { NSWorkspace.shared.open(URL(string: "https://spacecamp2.satellite.co.nz/")!) }
                 Divider()
                 Button("Hide Floating Timer") { UserDefaults.standard.set(false, forKey: "showFloating") }
             } label: {
