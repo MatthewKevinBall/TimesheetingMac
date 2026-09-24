@@ -3,14 +3,31 @@ import SwiftUI
 
 /// Background view that drags the window it's in.
 struct DragHandle: NSViewRepresentable {
+    var onDoubleClick: (() -> Void)? = nil
+
     final class HandleView: NSView {
+        var onDoubleClick: (() -> Void)?
+
         override var mouseDownCanMoveWindow: Bool { true }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2, let onDoubleClick {
+                onDoubleClick()
+            } else {
+                window?.performDrag(with: event)
+            }
+        }
     }
 
-    func makeNSView(context: Context) -> NSView { HandleView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func makeNSView(context: Context) -> HandleView {
+        let view = HandleView()
+        view.onDoubleClick = onDoubleClick
+        return view
+    }
+
+    func updateNSView(_ nsView: HandleView, context: Context) {
+        nsView.onDoubleClick = onDoubleClick
+    }
 }
 
 struct ColorDot: View {

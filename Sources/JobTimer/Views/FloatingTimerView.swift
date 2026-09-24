@@ -55,7 +55,7 @@ struct FloatingTimerView: View {
         }
         .padding(.horizontal, 12)
         .frame(width: Self.width, height: Self.height)
-        .background(DragHandle())
+        .background(DragHandle { AppController.shared.showQuickSwitcher() })
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(accent.opacity(0.6), lineWidth: 1.5))
     }
