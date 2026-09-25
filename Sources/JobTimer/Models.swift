@@ -42,9 +42,31 @@ struct TimeEntry: Identifiable, Codable, Hashable {
     }
 }
 
+/// A manual correction to a job's tracked time on one day, added on top of its entries.
+struct Adjustment: Codable, Hashable {
+    var jobID: UUID
+    /// Start of the day it applies to.
+    var day: Date
+    var seconds: TimeInterval
+}
+
 struct AppData: Codable {
     var jobs: [Job] = []
     var entries: [TimeEntry] = []
+    var adjustments: [Adjustment] = []
+
+    init(jobs: [Job], entries: [TimeEntry], adjustments: [Adjustment]) {
+        self.jobs = jobs
+        self.entries = entries
+        self.adjustments = adjustments
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        jobs = try c.decodeIfPresent([Job].self, forKey: .jobs) ?? []
+        entries = try c.decodeIfPresent([TimeEntry].self, forKey: .entries) ?? []
+        adjustments = try c.decodeIfPresent([Adjustment].self, forKey: .adjustments) ?? []
+    }
 }
 
 enum MainTab: Hashable {
@@ -53,19 +75,9 @@ enum MainTab: Hashable {
 
 struct JobSummary: Identifiable {
     let job: Job
+    /// Timer total plus any manual adjustment.
     let seconds: TimeInterval
+    let adjustment: TimeInterval
     let notes: [String]
     var id: UUID { job.id }
-}
-
-enum TimelineItem: Identifiable {
-    case entry(TimeEntry)
-    case gap(start: Date, end: Date)
-
-    var id: String {
-        switch self {
-        case .entry(let e): return e.id.uuidString
-        case .gap(let s, _): return "gap-\(s.timeIntervalSince1970)"
-        }
-    }
 }

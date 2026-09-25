@@ -14,11 +14,9 @@ struct TimesheetView: View {
             header
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    summarySection
-                    entriesSection
-                }
-                .padding(20)
+                summarySection
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
             }
         }
     }
@@ -90,7 +88,13 @@ struct TimesheetView: View {
                                 ColorDot(color: s.job.color)
                                 Text(s.job.displayName).lineLimit(1)
                             }
-                            Text(Fmt.hm(s.seconds)).monospacedDigit().foregroundStyle(.secondary)
+                            HStack(spacing: 4) {
+                                Text(Fmt.hm(s.seconds))
+                                    .monospacedDigit()
+                                    .foregroundStyle(s.adjustment == 0 ? Color.secondary : Color.orange)
+                                    .help(s.adjustment == 0 ? "" : "Manually edited (timer: \(Fmt.hm(s.seconds - s.adjustment)))")
+                                EditTrackedButton(summary: s, day: day)
+                            }
                             HStack(spacing: 4) {
                                 Text(hours).monospacedDigit().bold()
                                 CopyButton(text: hours, help: "Copy hours")
@@ -121,43 +125,6 @@ struct TimesheetView: View {
             }
         }
     }
-
-    // MARK: Entries
-
-    private var entriesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Entries").font(.headline)
-                Spacer()
-                Button {
-                    addManualEntry()
-                } label: {
-                    Label("Add Entry", systemImage: "plus")
-                }
-                .disabled(store.activeJobs.isEmpty)
-            }
-
-            let items = store.timeline(on: day)
-            if items.isEmpty {
-                Text("No entries. Use “Add Entry” to add time you forgot to track.")
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(items) { item in
-                switch item {
-                case .entry(let e): EntryRow(entry: e)
-                case .gap(let s, let e): GapRow(start: s, end: e)
-                }
-            }
-        }
-    }
-
-    private func addManualEntry() {
-        guard let job = store.activeJobs.first else { return }
-        let dayEntries = store.entries(on: day)
-        let nineAM = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) ?? day
-        let start = dayEntries.compactMap(\.end).max() ?? nineAM
-        store.addEntry(jobID: job.id, start: start, end: start.addingTimeInterval(Billing.block))
-    }
 }
 
 private struct CopyButton: View {
@@ -176,108 +143,62 @@ private struct CopyButton: View {
     }
 }
 
-private struct EntryRow: View {
-    let entry: TimeEntry
+/// Pencil button that lets you override a job's total for the day.
+private struct EditTrackedButton: View {
+    let summary: JobSummary
+    let day: Date
     private var store = Store.shared
+    @State private var editing = false
+    @State private var text = ""
 
-    init(entry: TimeEntry) {
-        self.entry = entry
+    init(summary: JobSummary, day: Date) {
+        self.summary = summary
+        self.day = day
     }
+
+    private var parsed: TimeInterval? { Fmt.parseDuration(text) }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ColorDot(color: store.job(for: entry.jobID)?.color ?? .gray, size: 10)
-
-            Picker("", selection: binding(\.jobID)) {
-                ForEach(store.pickerJobs(including: entry.jobID)) { job in
-                    Text(job.displayName).tag(job.id)
+        Button {
+            text = Fmt.hm(summary.seconds)
+            editing = true
+        } label: {
+            Image(systemName: "pencil").font(.caption)
+        }
+        .buttonStyle(.borderless)
+        .help("Edit time")
+        .popover(isPresented: $editing, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(summary.job.displayName).font(.headline).lineLimit(1)
+                TextField("1:30 or 1.5", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                    .onSubmit(save)
+                Text(parsed.map { "\(Fmt.hours(Billing.round($0)))h after rounding" } ?? "Enter a time like 1:30, 1.5 or 90m")
+                    .font(.caption)
+                    .foregroundStyle(parsed == nil ? Color.red : Color.secondary)
+                HStack {
+                    if summary.adjustment != 0 {
+                        Button("Reset to Timer") {
+                            store.clearAdjustment(for: summary.job.id, on: day)
+                            editing = false
+                        }
+                    }
+                    Spacer()
+                    Button("Cancel") { editing = false }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Save", action: save)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(parsed == nil)
                 }
             }
-            .labelsHidden()
-            .frame(width: 220)
-
-            DatePicker("", selection: binding(\.start), displayedComponents: .hourAndMinute)
-                .labelsHidden()
-            Text("–")
-            if entry.isRunning {
-                Text("now")
-                    .foregroundStyle(.green)
-                    .frame(width: 70, alignment: .leading)
-            } else {
-                DatePicker("", selection: endBinding, displayedComponents: .hourAndMinute)
-                    .labelsHidden()
-            }
-
-            Text(Fmt.hm(entry.duration(now: store.now)))
-                .monospacedDigit()
-                .frame(width: 44, alignment: .trailing)
-
-            TextField("Note", text: binding(\.note))
-                .textFieldStyle(.roundedBorder)
-
-            if entry.isRunning {
-                Button { store.stop() } label: { Image(systemName: "stop.fill") }
-                    .buttonStyle(.borderless)
-                    .help("Stop timer")
-            }
-            Button { store.deleteEntry(entry.id) } label: { Image(systemName: "trash") }
-                .buttonStyle(.borderless)
-                .help("Delete entry")
+            .padding(14)
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
     }
 
-    private func binding<T>(_ keyPath: WritableKeyPath<TimeEntry, T>) -> Binding<T> {
-        let id = entry.id
-        let fallback = entry[keyPath: keyPath]
-        return Binding(
-            get: { store.entries.first { $0.id == id }?[keyPath: keyPath] ?? fallback },
-            set: { value in store.updateEntry(id) { $0[keyPath: keyPath] = value } }
-        )
-    }
-
-    private var endBinding: Binding<Date> {
-        let id = entry.id
-        return Binding(
-            get: { store.entries.first { $0.id == id }?.end ?? Date() },
-            set: { value in store.updateEntry(id) { $0.end = value } }
-        )
-    }
-}
-
-private struct GapRow: View {
-    let start: Date
-    let end: Date
-    private var store = Store.shared
-
-    init(start: Date, end: Date) {
-        self.start = start
-        self.end = end
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "questionmark.circle").foregroundStyle(.secondary)
-            Text("Untracked \(Fmt.time.string(from: start)) – \(Fmt.time.string(from: end))")
-            Text(Fmt.hm(end.timeIntervalSince(start))).monospacedDigit().foregroundStyle(.secondary)
-            Spacer()
-            Menu("Assign to Job") {
-                ForEach(store.activeJobs) { job in
-                    Button(job.displayName) { store.addEntry(jobID: job.id, start: start, end: end) }
-                }
-            }
-            .fixedSize()
-            .disabled(store.activeJobs.isEmpty)
-        }
-        .font(.callout)
-        .padding(.vertical, 6)
-        .padding(.horizontal, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                .foregroundStyle(.secondary.opacity(0.5))
-        )
+    private func save() {
+        guard let seconds = parsed else { return }
+        store.setSeconds(seconds, for: summary.job.id, on: day)
+        editing = false
     }
 }

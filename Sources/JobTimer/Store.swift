@@ -7,6 +7,7 @@ final class Store {
 
     private(set) var jobs: [Job] = []
     private(set) var entries: [TimeEntry] = []
+    private(set) var adjustments: [Adjustment] = []
     /// Ticks every second so timers in the UI stay live.
     var now = Date()
     var mainTab: MainTab = .timesheet
@@ -66,27 +67,47 @@ final class Store {
         }
     }
 
-    /// Jobs to offer in a picker: active ones plus `jobID` if it's archived.
-    func pickerJobs(including jobID: UUID) -> [Job] {
-        var list = activeJobs
-        if !list.contains(where: { $0.id == jobID }), let j = job(for: jobID) { list.append(j) }
-        return list
-    }
-
     func entries(on day: Date) -> [TimeEntry] {
         entries.filter { calendar.isDate($0.start, inSameDayAs: day) }.sorted { $0.start < $1.start }
     }
 
     func seconds(for jobID: UUID, on day: Date) -> TimeInterval {
-        entries(on: day).filter { $0.jobID == jobID }.reduce(0) { $0 + $1.duration(now: now) }
+        max(0, trackedSeconds(for: jobID, on: day) + adjustment(for: jobID, on: day))
     }
 
     func seconds(for jobID: UUID, since date: Date) -> TimeInterval {
-        entries.filter { $0.jobID == jobID && $0.start >= date }.reduce(0) { $0 + $1.duration(now: now) }
+        let tracked = entries.filter { $0.jobID == jobID && $0.start >= date }.reduce(0) { $0 + $1.duration(now: now) }
+        let from = calendar.startOfDay(for: date)
+        let adjusted = adjustments.filter { $0.jobID == jobID && $0.day >= from }.reduce(0) { $0 + $1.seconds }
+        return max(0, tracked + adjusted)
     }
 
     func totalSeconds(on day: Date) -> TimeInterval {
-        entries(on: day).reduce(0) { $0 + $1.duration(now: now) }
+        summary(on: day).reduce(0) { $0 + $1.seconds }
+    }
+
+    /// Timer time only, ignoring manual adjustments.
+    private func trackedSeconds(for jobID: UUID, on day: Date) -> TimeInterval {
+        entries(on: day).filter { $0.jobID == jobID }.reduce(0) { $0 + $1.duration(now: now) }
+    }
+
+    func adjustment(for jobID: UUID, on day: Date) -> TimeInterval {
+        adjustments.first { $0.jobID == jobID && calendar.isDate($0.day, inSameDayAs: day) }?.seconds ?? 0
+    }
+
+    /// Manually set a job's total for a day; stored as the difference from the timer total.
+    func setSeconds(_ target: TimeInterval, for jobID: UUID, on day: Date) {
+        let delta = max(0, target) - trackedSeconds(for: jobID, on: day)
+        adjustments.removeAll { $0.jobID == jobID && calendar.isDate($0.day, inSameDayAs: day) }
+        if abs(delta) >= 1 {
+            adjustments.append(Adjustment(jobID: jobID, day: calendar.startOfDay(for: day), seconds: delta))
+        }
+        save()
+    }
+
+    func clearAdjustment(for jobID: UUID, on day: Date) {
+        adjustments.removeAll { $0.jobID == jobID && calendar.isDate($0.day, inSameDayAs: day) }
+        save()
     }
 
     func billableSeconds(on day: Date) -> TimeInterval {
@@ -104,24 +125,17 @@ final class Store {
             let n = e.note.trimmed
             if !n.isEmpty && !(notes[e.jobID]?.contains(n) ?? false) { notes[e.jobID, default: []].append(n) }
         }
+        var adjust: [UUID: TimeInterval] = [:]
+        for a in adjustments where calendar.isDate(a.day, inSameDayAs: day) {
+            if secs[a.jobID] == nil { order.append(a.jobID); secs[a.jobID] = 0 }
+            adjust[a.jobID, default: 0] += a.seconds
+        }
         return order.compactMap { id in
-            job(for: id).map { JobSummary(job: $0, seconds: secs[id] ?? 0, notes: notes[id] ?? []) }
-        }
-    }
-
-    /// Entries for a day with untracked gaps (≥ 5 min) between them.
-    func timeline(on day: Date) -> [TimelineItem] {
-        var items: [TimelineItem] = []
-        var prevEnd: Date?
-        for e in entries(on: day) {
-            if let p = prevEnd, e.start.timeIntervalSince(p) >= 300 {
-                items.append(.gap(start: p, end: e.start))
+            let adj = adjust[id] ?? 0
+            return job(for: id).map {
+                JobSummary(job: $0, seconds: max(0, (secs[id] ?? 0) + adj), adjustment: adj, notes: notes[id] ?? [])
             }
-            items.append(.entry(e))
-            let end = e.end ?? now
-            prevEnd = max(prevEnd ?? end, end)
         }
-        return items
     }
 
     func summaryText(on day: Date) -> String {
@@ -231,12 +245,13 @@ final class Store {
     }
 
     func hasEntries(_ jobID: UUID) -> Bool {
-        entries.contains { $0.jobID == jobID }
+        entries.contains { $0.jobID == jobID } || adjustments.contains { $0.jobID == jobID }
     }
 
     func deleteJob(_ id: UUID) {
         guard !hasEntries(id) else { return }
         jobs.removeAll { $0.id == id }
+        adjustments.removeAll { $0.jobID == id }
         save()
     }
 
@@ -301,6 +316,7 @@ final class Store {
             let decoded = try Self.decoder.decode(AppData.self, from: data)
             jobs = decoded.jobs
             entries = decoded.entries
+            adjustments = decoded.adjustments
         } catch {
             NSLog("JobTimer: failed to read data.json: \(error)")
             // Keep the unreadable file rather than overwriting it.
@@ -322,7 +338,7 @@ final class Store {
         saveWork?.cancel()
         saveWork = nil
         do {
-            let data = try Self.encoder.encode(AppData(jobs: jobs, entries: entries))
+            let data = try Self.encoder.encode(AppData(jobs: jobs, entries: entries, adjustments: adjustments))
             try data.write(to: fileURL, options: .atomic)
         } catch {
             NSLog("JobTimer: save failed: \(error)")

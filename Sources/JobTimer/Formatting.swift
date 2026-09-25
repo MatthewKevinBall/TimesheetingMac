@@ -24,6 +24,24 @@ enum Fmt {
         return m < 60 ? "\(m) min" : "\(m / 60)h \(m % 60)m"
     }
 
+    /// Parses "1:30", "1.5", "1.5h", "90m" or "90 min" into seconds.
+    static func parseDuration(_ text: String) -> TimeInterval? {
+        let t = text.trimmed.lowercased()
+        if t.contains(":") {
+            let parts = t.components(separatedBy: ":").map(\.trimmed)
+            guard parts.count == 2, let h = Int(parts[0].isEmpty ? "0" : parts[0]),
+                  let m = Int(parts[1]), h >= 0, (0..<60).contains(m) else { return nil }
+            return TimeInterval(h * 3600 + m * 60)
+        }
+        for suffix in ["minutes", "mins", "min", "m"] where t.hasSuffix(suffix) {
+            guard let m = Double(String(t.dropLast(suffix.count)).trimmed), m >= 0 else { return nil }
+            return m * 60
+        }
+        let hours = t.hasSuffix("h") ? String(t.dropLast()).trimmed : t
+        guard let h = Double(hours), h >= 0 else { return nil }
+        return h * 3600
+    }
+
     static let time: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .none
